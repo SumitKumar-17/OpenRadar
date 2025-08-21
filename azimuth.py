@@ -1,4 +1,4 @@
-import mmWave
+import mmwave.dsp as dsp
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
