@@ -9,7 +9,7 @@ from dataclasses import dataclass
 class RadarConfig:
     """Configuration parameters for radar processing"""
     # File parameters
-    input_file: str = './adc_data_150_2025-08-20_12-57-06.npy'
+    input_file: str = './adc_data_150_2025-08-20_12-52-02.npy'
     
     # Radar parameters
     num_chirps: int = 182 * 3  # 546
