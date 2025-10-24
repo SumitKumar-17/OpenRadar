@@ -1,4 +1,4 @@
-import mmwave.dsp as dsp
+from mmwave import dsp
 from mmwave.dsp.utils import Window
 import numpy as np
 import matplotlib.pyplot as plt
@@ -9,7 +9,7 @@ from dataclasses import dataclass
 class RadarConfig:
     """Configuration parameters for radar processing"""
     # File parameters
-    input_file: str = './adc_data_150_2025-08-20_12-52-02.npy'
+    input_file: str = './0_degree_positive3_2025-10-16_15-26-20.npy'
     
     # Radar parameters
     num_chirps: int = 182 * 3  # 546
