@@ -151,7 +151,7 @@ def frame2pointcloud(dopplerResult, pointCloudProcessCFG):
 
 
 if __name__ == '__main__':
-    npy_filename = "./30_degree_positive2_2025-10-16_15-02-40.npy"   
+    npy_filename = "./0_degree/0_degree_positive2_2025-10-16_15-25-43.npy"   
     data = np.load(npy_filename, allow_pickle=True)
     print("Loaded .npy file:", npy_filename)
     print("Data shape:", data.shape)
