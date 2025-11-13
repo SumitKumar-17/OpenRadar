@@ -84,7 +84,7 @@ class AzimuthProcessor:
         # Step 5: Apply Gaussian smoothing (noise reduction)
         if self.config.noise_filter_size > 1:
             range_azimuth = gaussian_filter(range_azimuth, sigma=1)
-jpg
+            
         # Step 6: Log scale conversion (dB)
         return self._generate_heatmap(range_azimuth)
 
