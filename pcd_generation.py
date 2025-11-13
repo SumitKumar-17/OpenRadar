@@ -1,13 +1,14 @@
+
 import sys
 import os
 import struct
 import time
 import numpy as np
 import array as arr
-import configuration as cfg
+import configuration as cfg  # Assuming you have this file
 from scipy.ndimage import convolve1d, gaussian_filter
 import matplotlib.pyplot as plt
-
+from sklearn.cluster import DBSCAN  # NEW: Import DBSCAN for filtering
 
 def read8byte(x):
     return struct.unpack('<hhhh', x)
@@ -146,21 +147,39 @@ def frame2pointcloud(dopplerResult, pointCloudProcessCFG):
     x, y, z = x_vec * R, y_vec * R, z_vec * R
 
     pointCloud = np.vstack((x, y, z, V, energy, R)).T
+    
+    # 1. First, filter by energy (as before)
     med_energy = np.median(pointCloud[:, 4])
-    return pointCloud[pointCloud[:, 4] > med_energy]
+    pc_filtered_energy = pointCloud[pointCloud[:, 4] > med_energy]
+    
+    # 2. NEW: Filter by distance (Range)
+    #    Keep only points where the range (column 5) is between 4m and 6m
+    if pc_filtered_energy.shape[0] > 0:
+        range_values = pc_filtered_energy[:, 5]
+        range_mask = (range_values >= 4) & (range_values <= 6)
+        pc_filtered_range = pc_filtered_energy[range_mask]
+        return pc_filtered_range
+    else:
+        return np.empty((0, 6))
 
+def process_radar_file(npy_filename, pointCloudProcessCFG, angle_deg):
+    """
+    Loads and processes a single .npy radar data file.
+    Applies coordinate transformation based on the steering angle.
+    Returns a (N, 2) numpy array of (X, Y) coordinates.
+    """
+    print(f"Loading and processing {npy_filename} for angle {angle_deg}°...")
+    try:
+        data = np.load(npy_filename, allow_pickle=True)
+        print(f"Loaded {npy_filename}, shape: {data.shape}")
+    except FileNotFoundError:
+        print(f"Warning: File not found {npy_filename}. Skipping.")
+        return np.empty((0, 2))
 
-if __name__ == '__main__':
-    npy_filename = "./0_degree/0_degree_positive2_2025-10-16_15-25-43.npy"   
-    data = np.load(npy_filename, allow_pickle=True)
-    print("Loaded .npy file:", npy_filename)
-    print("Data shape:", data.shape)
-
-    pointCloudProcessCFG = PointCloudProcessCFG()
     frameConfig = pointCloudProcessCFG.frameConfig
     total_frames = data.shape[0]
 
-    all_xy_points = []
+    all_xy_points_local = []
     prev_range_fft = None
 
     for frame_no in range(total_frames):
@@ -169,7 +188,12 @@ if __name__ == '__main__':
         reshapedFrame = frameReshape(np_frame, frameConfig)
         rangeResult = rangeFFT(reshapedFrame, frameConfig)
 
-        rangeResult = apply_gaussian_filter(rangeResult, sigma=1.0)
+        # --- YAHAN PAR CHANGE KIYA GAYA HAI ---
+        # Gaussian filter ko strong kar diya gaya hai.
+        # Pehle sigma=1.0 tha, ab hum 2.0 try kar rahe hain.
+        # Aap is value ko aur badha (e.g., 2.5) ya ghata (e.g., 1.5) sakte hain.
+        rangeResult = apply_gaussian_filter(rangeResult, sigma=2.0) # <-- TUNED PARAMETER
+        
         rangeResult = mod_filter(rangeResult, prev_range_fft, alpha=0.6)
         prev_range_fft = rangeResult
 
@@ -180,24 +204,119 @@ if __name__ == '__main__':
         pointCloud = frame2pointcloud(dopplerResult, pointCloudProcessCFG)
 
         if pointCloud.shape[0] > 0:
-            all_xy_points.append(pointCloud[:, [0, 1]])  # store X, Y
+            all_xy_points_local.append(pointCloud[:, [0, 1]])  # store Local X, Y
 
-        print(f"Frame {frame_no+1}/{total_frames}: {pointCloud.shape}")
+    if not all_xy_points_local:
+        print(f"No points detected in {npy_filename}.")
+        return np.empty((0, 2))
 
-    # Concatenate all XY coordinates
-    if all_xy_points:
-        all_xy_points = np.concatenate(all_xy_points, axis=0)
-        np.save("xy_pointcloud_30deg.npy", all_xy_points)
-        print("Saved XY coordinates to xy_pointcloud_0deg.npy")
+    xy_local = np.concatenate(all_xy_points_local, axis=0)
 
-        # 2D Top-Down View
-        plt.figure(figsize=(7, 6))
-        plt.scatter(all_xy_points[:, 0], all_xy_points[:, 1], s=8, c='royalblue', alpha=0.6)
+    # Apply 2D rotation matrix for coordinate transformation
+    print(f"Applying {angle_deg}° rotation to {xy_local.shape[0]} points...")
+    angle_rad = np.deg2rad(angle_deg)
+    cos_theta = np.cos(angle_rad)
+    sin_theta = np.sin(angle_rad)
+    
+    x_local = xy_local[:, 0]
+    y_local = xy_local[:, 1]
+    
+    x_global = x_local * cos_theta - y_local * sin_theta
+    y_global = x_local * sin_theta + y_local * cos_theta
+    
+    xy_global = np.vstack((x_global, y_global)).T
+    
+    print(f"Finished processing {npy_filename}.")
+    return xy_global
+
+if __name__ == '__main__':
+    # 1. Define the files and their corresponding angles
+    #    !!! YOU MUST UPDATE THESE PATHS to your .npy files !!!
+    base_path = r"./data"  # Example base path, update as needed
+    
+
+    files_to_process = {
+        0: os.path.join(base_path, "0 degree", "0_degree_positive1_2025-10-16_15-25-11.npy"),
+        -15: os.path.join(base_path, "15 degree negative", "15_degree_negative1_2025-10-16_15-33-29.npy"),
+         15:  os.path.join(base_path, "15 degree positive", "15_degree_positive1_2025-10-16_15-09-48.npy"),
+        30:  os.path.join(base_path, "30 degree positive", "30_degree_positive1_2025-10-16_15-01-59.npy"),
+        -30: os.path.join(base_path, "30 degree negative", "30_degree_negative1_2025-10-16_17-09-04.npy")
+    }
+
+    # 2. Define colors for each angle
+    angle_colors = {
+        -30: 'purple',
+        -15: 'blue',
+         0:  'green',
+        15:  'orange',
+        30:  'red'
+    }
+
+    # 3. Initialize common configuration
+    pointCloudProcessCFG = PointCloudProcessCFG()
+    
+    # 4. Process each file and store results for plotting
+    plot_data = []
+    
+    print("Starting point cloud processing for all angles...")
+    for angle, npy_filename in files_to_process.items():
+        # Pass the angle to the processing function
+        xy_points_global = process_radar_file(npy_filename, pointCloudProcessCFG, angle)
+        
+        if xy_points_global.shape[0] > 0:
+            
+            # --- MORE AGGRESSIVE DBSCAN SETTINGS ---
+            #
+            # We are increasing min_samples from 10 to 30.
+            # This means a cluster must be much denser to be kept.
+            #
+            # We are also decreasing eps from 0.5 to 0.4.
+            # This means points must be closer together.
+            #
+            # Feel free to tune these two values!
+            # To filter MORE: increase min_samples, decrease eps
+            # To filter LESS: decrease min_samples, increase eps
+            
+            print(f"Applying MORE AGGRESSIVE DBSCAN filtering to {angle}° data...")
+            db = DBSCAN(eps=0.4, min_samples=30).fit(xy_points_global) # <-- TUNED PARAMETERS
+            labels = db.labels_
+            
+            # Keep only points that are part of a cluster (label != -1)
+            filtered_points = xy_points_global[labels != -1]
+            num_removed = xy_points_global.shape[0] - filtered_points.shape[0]
+            print(f"DBSCAN removed {num_removed} noise points (was {xy_points_global.shape[0]} points, now {filtered_points.shape[0]}).")
+
+            if filtered_points.shape[0] > 0:
+                plot_data.append({
+                    'angle': angle,
+                    'points': filtered_points, # Use filtered points
+                    'color': angle_colors[angle]
+                })
+            else:
+                print(f"No non-noise points found for angle {angle}° after DBSCAN.")
+    
+    print("All files processed. Generating plot...")
+
+    # 5. Plot all point clouds on one figure
+    plt.figure(figsize=(12, 10))
+    
+    if not plot_data:
+        print("No data to plot.")
+    else:
+        for data_dict in plot_data:
+            plt.scatter(
+                data_dict['points'][:, 0], 
+                data_dict['points'][:, 1], 
+                s=8, 
+                c=data_dict['color'], 
+                alpha=0.6, 
+                label=f"{data_dict['angle']}° Beam"
+            )
+
         plt.xlabel("X (m)")
         plt.ylabel("Y (m)")
-        plt.title("2D Global Point Cloud (Top-Down View, 0° Beam)")
+        plt.title("Global Point Cloud (Top-Down View, All Angles) - Rotated & Aggressively Filtered")
         plt.grid(True)
         plt.axis('equal')
+        plt.legend()
         plt.show()
-    else:
-        print("No points detected.")
